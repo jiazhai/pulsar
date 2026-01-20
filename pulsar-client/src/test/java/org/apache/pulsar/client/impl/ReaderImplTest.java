@@ -33,8 +33,10 @@ import org.awaitility.Awaitility;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import static org.testng.Assert.assertNotNull;
+import static org.testng.AssertJUnit.assertEquals;
 import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.assertNotNull;
+import static org.testng.AssertJUnit.assertNull;
 import static org.testng.AssertJUnit.assertTrue;
 
 public class ReaderImplTest {
@@ -98,5 +100,127 @@ public class ReaderImplTest {
         builder.messageCrypto(new MessageCryptoBc("ctx1", true));
         assertNotNull(builder.create());
         assertNotNull(builder.getConf().getMessageCrypto());
+    }
+
+    @Test
+    public void testPeek() throws Exception {
+        ReaderConfigurationData<byte[]> readerConfiguration = new ReaderConfigurationData<>();
+        readerConfiguration.setTopicName("topicName");
+        CompletableFuture<Consumer<byte[]>> consumerFuture = new CompletableFuture<>();
+        ReaderImpl<byte[]> reader = new ReaderImpl<>(
+                client,
+                readerConfiguration,
+                ClientTestFixtures.createMockedExecutorProvider(),
+                consumerFuture,
+                Schema.BYTES);
+
+        // Publish a message
+        client.getLookup().thenRun(() -> {
+            ClientTestFixtures.produceMessage(client, "testMessage");
+        });
+
+        // Wait for message to be available
+        Awaitility.await().untilAsserted(() -> {
+            assertTrue(reader.getConsumer().hasIncomingMessages());
+        });
+
+        // Peek should return the same message multiple times without advancing cursor
+        Message<byte[]> peekedMsg1 = reader.peek();
+        assertNotNull(peekedMsg1);
+        assertEquals("testMessage", new String(peekedMsg1.getData()));
+
+        Message<byte[]> peekedMsg2 = reader.peek();
+        assertNotNull(peekedMsg2);
+        assertEquals("testMessage", new String(peekedMsg2.getData()));
+        assertEquals(peekedMsg1.getMessageId(), peekedMsg2.getMessageId());
+
+        // readNext should still return the same message
+        Message<byte[]> readMsg = reader.readNext();
+        assertNotNull(readMsg);
+        assertEquals("testMessage", new String(readMsg.getData()));
+        assertEquals(peekedMsg1.getMessageId(), readMsg.getMessageId());
+    }
+
+    @Test
+    public void testPeekAsync() throws Exception {
+        ReaderConfigurationData<byte[]> readerConfiguration = new ReaderConfigurationData<>();
+        readerConfiguration.setTopicName("topicName");
+        CompletableFuture<Consumer<byte[]>> consumerFuture = new CompletableFuture<>();
+        ReaderImpl<byte[]> reader = new ReaderImpl<>(
+                client,
+                readerConfiguration,
+                ClientTestFixtures.createMockedExecutorProvider(),
+                consumerFuture,
+                Schema.BYTES);
+
+        // Start peek before message is available
+        CompletableFuture<Message<byte[]>> peekFuture = reader.peekAsync();
+
+        // Publish a message
+        client.getLookup().thenRun(() -> {
+            ClientTestFixtures.produceMessage(client, "testMessage");
+        });
+
+        // Peek should complete with the message
+        Message<byte[]> peekedMsg = peekFuture.get(5, TimeUnit.SECONDS);
+        assertNotNull(peekedMsg);
+        assertEquals("testMessage", new String(peekedMsg.getData()));
+
+        // Cursor should not have advanced, readNext should return the same message
+        Message<byte[]> readMsg = reader.readNext();
+        assertNotNull(readMsg);
+        assertEquals("testMessage", new String(readMsg.getData()));
+        assertEquals(peekedMsg.getMessageId(), readMsg.getMessageId());
+    }
+
+    @Test
+    public void testPeekWithTimeout() throws Exception {
+        ReaderConfigurationData<byte[]> readerConfiguration = new ReaderConfigurationData<>();
+        readerConfiguration.setTopicName("topicName");
+        CompletableFuture<Consumer<byte[]>> consumerFuture = new CompletableFuture<>();
+        ReaderImpl<byte[]> reader = new ReaderImpl<>(
+                client,
+                readerConfiguration,
+                ClientTestFixtures.createMockedExecutorProvider(),
+                consumerFuture,
+                Schema.BYTES);
+
+        // Publish a message
+        client.getLookup().thenRun(() -> {
+            ClientTestFixtures.produceMessage(client, "testMessage");
+        });
+
+        // Wait for message to be available
+        Awaitility.await().untilAsserted(() -> {
+            assertTrue(reader.getConsumer().hasIncomingMessages());
+        });
+
+        // Peek with timeout should return the message
+        Message<byte[]> peekedMsg = reader.peek(5, TimeUnit.SECONDS);
+        assertNotNull(peekedMsg);
+        assertEquals("testMessage", new String(peekedMsg.getData()));
+
+        // Cursor should not have advanced
+        Message<byte[]> readMsg = reader.readNext();
+        assertNotNull(readMsg);
+        assertEquals("testMessage", new String(readMsg.getData()));
+        assertEquals(peekedMsg.getMessageId(), readMsg.getMessageId());
+    }
+
+    @Test
+    public void testPeekWhenNoMessage() throws Exception {
+        ReaderConfigurationData<byte[]> readerConfiguration = new ReaderConfigurationData<>();
+        readerConfiguration.setTopicName("topicName");
+        CompletableFuture<Consumer<byte[]>> consumerFuture = new CompletableFuture<>();
+        ReaderImpl<byte[]> reader = new ReaderImpl<>(
+                client,
+                readerConfiguration,
+                ClientTestFixtures.createMockedExecutorProvider(),
+                consumerFuture,
+                Schema.BYTES);
+
+        // Peek with timeout should return null when no message is available
+        Message<byte[]> peekedMsg = reader.peek(1, TimeUnit.SECONDS);
+        assertNull(peekedMsg);
     }
 }

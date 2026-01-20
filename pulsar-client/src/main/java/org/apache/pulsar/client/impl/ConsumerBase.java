@@ -91,6 +91,7 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
     final GrowableArrayBlockingQueue<Message<T>> incomingMessages;
     protected Map<MessageIdAdv, MessageIdImpl[]> unAckedChunkedMessageIdSequenceMap = new ConcurrentHashMap<>();
     protected final ConcurrentLinkedQueue<CompletableFuture<Message<T>>> pendingReceives;
+    protected final ConcurrentLinkedQueue<CompletableFuture<Message<T>>> pendingPeeks;
     protected final int maxReceiverQueueSize;
     private volatile int currentReceiverQueueSize;
 
@@ -149,6 +150,7 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
         this.externalPinnedExecutor = executorProvider.getExecutor();
         this.internalPinnedExecutor = client.getInternalExecutorService();
         this.pendingReceives = Queues.newConcurrentLinkedQueue();
+        this.pendingPeeks = Queues.newConcurrentLinkedQueue();
         this.pendingBatchReceives = Queues.newConcurrentLinkedQueue();
         this.schema = schema;
         this.interceptors = interceptors;
@@ -300,6 +302,51 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
     protected abstract Message<T> internalReceive(long timeout, TimeUnit unit) throws PulsarClientException;
 
     @Override
+    public Message<T> peek() throws PulsarClientException {
+        if (listener != null) {
+            throw new PulsarClientException.InvalidConfigurationException(
+                    "Cannot use peek() when a listener has been set");
+        }
+        verifyConsumerState();
+        return internalPeek();
+    }
+
+    protected abstract Message<T> internalPeek() throws PulsarClientException;
+
+    @Override
+    public CompletableFuture<Message<T>> peekAsync() {
+        if (listener != null) {
+            return FutureUtil.failedFuture(new PulsarClientException.InvalidConfigurationException(
+                    "Cannot use peek() when a listener has been set"));
+        }
+        try {
+            verifyConsumerState();
+        } catch (PulsarClientException e) {
+            return FutureUtil.failedFuture(e);
+        }
+        return internalPeekAsync();
+    }
+
+    protected abstract CompletableFuture<Message<T>> internalPeekAsync();
+
+    @Override
+    public Message<T> peek(int timeout, TimeUnit unit) throws PulsarClientException {
+        if (getCurrentReceiverQueueSize() == 0) {
+            throw new PulsarClientException.InvalidConfigurationException(
+                    "Can't use peek with timeout, if queue size is 0");
+        }
+        if (listener != null) {
+            throw new PulsarClientException.InvalidConfigurationException(
+                    "Cannot use peek() when a listener has been set");
+        }
+
+        verifyConsumerState();
+        return internalPeek(timeout, unit);
+    }
+
+    protected abstract Message<T> internalPeek(long timeout, TimeUnit unit) throws PulsarClientException;
+
+    @Override
     public Messages<T> batchReceive() throws PulsarClientException {
         verifyBatchReceive();
         verifyConsumerState();
@@ -321,6 +368,10 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
         return !pendingReceives.isEmpty();
     }
 
+    protected boolean hasNextPendingPeek() {
+        return !pendingPeeks.isEmpty();
+    }
+
     protected CompletableFuture<Message<T>> nextPendingReceive() {
         CompletableFuture<Message<T>> receivedFuture;
         do {
@@ -328,6 +379,15 @@ public abstract class ConsumerBase<T> extends HandlerState implements Consumer<T
             // skip done futures (cancelling a future could mark it done)
         } while (receivedFuture != null && receivedFuture.isDone());
         return receivedFuture;
+    }
+
+    protected CompletableFuture<Message<T>> nextPendingPeek() {
+        CompletableFuture<Message<T>> peekFuture;
+        do {
+            peekFuture = pendingPeeks.poll();
+            // skip done futures (cancelling a future could mark it done)
+        } while (peekFuture != null && peekFuture.isDone());
+        return peekFuture;
     }
 
     protected void completePendingReceive(CompletableFuture<Message<T>> receivedFuture, Message<T> message) {

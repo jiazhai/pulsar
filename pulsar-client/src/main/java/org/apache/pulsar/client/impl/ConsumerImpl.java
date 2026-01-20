@@ -568,6 +568,75 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
     }
 
     @Override
+    protected Message<T> internalPeek() throws PulsarClientException {
+        Message<T> message;
+        try {
+            if (incomingMessages.isEmpty()) {
+                expectMoreIncomingMessages();
+            }
+            // Use peek() to read the message without removing it from the queue
+            // This allows the cursor to stay at the current position
+            message = incomingMessages.peek();
+            if (message == null) {
+                return null;
+            }
+            // Do not call messageProcessed() to avoid moving the cursor
+            // Call beforeConsume() to handle interceptors
+            return beforeConsume(message);
+        } catch (InterruptedException e) {
+            ExceptionHandler.handleInterruptedException(e);
+            stats.incrementNumReceiveFailed();
+            throw PulsarClientException.unwrap(e);
+        }
+    }
+
+    @Override
+    protected CompletableFuture<Message<T>> internalPeekAsync() {
+        CompletableFutureCancellationHandler cancellationHandler = new CompletableFutureCancellationHandler();
+        CompletableFuture<Message<T>> result = cancellationHandler.createFuture();
+        internalPinnedExecutor.execute(() -> {
+            Message<T> message = incomingMessages.peek();
+            if (message == null) {
+                expectMoreIncomingMessages();
+                // Add to pendingPeeks list for when message becomes available
+                pendingPeeks.add(result);
+                cancellationHandler.setCancelAction(() -> pendingPeeks.remove(result));
+            } else {
+                // Do not call messageProcessed() to avoid moving the cursor
+                result.complete(beforeConsume(message));
+            }
+        });
+
+        return result;
+    }
+
+    @Override
+    protected Message<T> internalPeek(long timeout, TimeUnit unit) throws PulsarClientException {
+        Message<T> message;
+        try {
+            if (incomingMessages.isEmpty()) {
+                expectMoreIncomingMessages();
+            }
+            message = incomingMessages.peek();
+            if (message == null) {
+                return null;
+            }
+            // Do not call messageProcessed() to avoid moving the cursor
+            message = listener == null ? beforeConsume(message) : message;
+            return message;
+        } catch (InterruptedException e) {
+            ExceptionHandler.handleInterruptedException(e);
+            State state = getState();
+            if (state != State.Closing && state != State.Closed) {
+                stats.incrementNumReceiveFailed();
+                throw PulsarClientException.unwrap(e);
+            } else {
+                return null;
+            }
+        }
+    }
+
+    @Override
     protected Messages<T> internalBatchReceive() throws PulsarClientException {
         try {
             return internalBatchReceiveAsync().get();
@@ -1362,6 +1431,12 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
                 return;
             }
             Message<T> interceptMsg = onArrival(message);
+            // Notify pending peeks first with the new message
+            // For peek, we want to return the message without removing it from queue
+            if (!pendingPeeks.isEmpty()) {
+                notifyPendingPeekCallback(interceptMsg, null);
+            }
+            // Then notify pending receives if any are waiting
             if (hasNextPendingReceive()) {
                 notifyPendingReceivedCallback(interceptMsg, null);
             } else if (enqueueMessageAndCheckBatchReceive(interceptMsg) && hasPendingBatchReceive()) {
@@ -1735,6 +1810,46 @@ public class ConsumerImpl<T> extends ConsumerBase<T> implements ConnectionHandle
         messageProcessed(message);
         // call interceptor and complete received callback
         interceptAndComplete(message, receivedFuture);
+    }
+
+    /**
+     * Notify waiting asyncPeek request with the message at the head of the queue.
+     * Unlike receive, peek does not remove the message from the queue.
+     *
+     * @param message the message at the head of the queue
+     */
+    void notifyPendingPeekCallback(final Message<T> message, Exception exception) {
+        if (pendingPeeks.isEmpty()) {
+            return;
+        }
+
+        // fetch peekFuture from queue
+        final CompletableFuture<Message<T>> peekFuture = nextPendingPeek();
+        if (peekFuture == null) {
+            return;
+        }
+
+        if (exception != null) {
+            internalPinnedExecutor.execute(() -> peekFuture.completeExceptionally(exception));
+            return;
+        }
+
+        if (message == null) {
+            IllegalStateException e = new IllegalStateException("peeked message can't be null");
+            internalPinnedExecutor.execute(() -> peekFuture.completeExceptionally(e));
+            return;
+        }
+
+        // For peek, we don't call messageProcessed() to avoid moving the cursor
+        // We do call beforeConsume() to handle interceptors
+        final Message<T> interceptMessage = beforeConsume(message);
+        internalPinnedExecutor.execute(() -> {
+            if (!peekFuture.complete(interceptMessage)) {
+                log.warn("Race condition detected. peek future was already completed (cancelled={}) and message was "
+                                + "dropped. message={}",
+                        peekFuture.isCancelled(), interceptMessage);
+            }
+        });
     }
 
     private void interceptAndComplete(final Message<T> message, final CompletableFuture<Message<T>> receivedFuture) {

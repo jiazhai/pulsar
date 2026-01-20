@@ -76,6 +76,42 @@ public interface Reader<T> extends Closeable {
     CompletableFuture<Message<T>> readNextAsync();
 
     /**
+     * Read the next message in the topic without moving the cursor position.
+     *
+     * <p>This method will block until a message is available.
+     * The cursor will remain at the current position, allowing multiple calls to peek() to
+     * return the same message. To advance to the next message, use {@link #readNext()}.
+     *
+     * @return the next message without advancing the cursor
+     * @throws PulsarClientException
+     */
+    Message<T> peek() throws PulsarClientException;
+
+    /**
+     * Read the next message in the topic without moving the cursor position,
+     * waiting for a maximum time.
+     *
+     * <p>Returns null if no message is received before the timeout.
+     * The cursor will remain at the current position, allowing multiple calls to peek() to
+     * return the same message. To advance to the next message, use {@link #readNext()}.
+     *
+     * @return the next message without advancing the cursor (Could be null if none received in time)
+     * @throws PulsarClientException
+     */
+    Message<T> peek(int timeout, TimeUnit unit) throws PulsarClientException;
+
+    /**
+     * Read asynchronously the next message in the topic without moving the cursor position.
+     *
+     * <p>The cursor will remain at the current position, allowing multiple calls to peek() to
+     * return the same message. To advance to the next message, use {@link #readNext()}.
+     *
+     * @return a future that will yield a message (when it's available) or {@link PulsarClientException} if the reader
+     *         is already closed.
+     */
+    CompletableFuture<Message<T>> peekAsync();
+
+    /**
      * Asynchronously close the reader and stop the broker to push more messages.
      *
      * @return a future that can be used to track the completion of the operation

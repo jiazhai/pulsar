@@ -468,6 +468,25 @@ public class MultiTopicsConsumerImpl<T> extends ConsumerBase<T> {
     }
 
     @Override
+    protected Message<T> internalPeek() throws PulsarClientException {
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for multi-topics consumer");
+    }
+
+    @Override
+    protected CompletableFuture<Message<T>> internalPeekAsync() {
+        return FutureUtil.failedFuture(
+                new PulsarClientException.InvalidConfigurationException(
+                        "peek() is not supported for multi-topics consumer"));
+    }
+
+    @Override
+    protected Message<T> internalPeek(long timeout, TimeUnit unit) throws PulsarClientException {
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for multi-topics consumer");
+    }
+
+    @Override
     protected CompletableFuture<Void> doAcknowledge(MessageId messageId, AckType ackType,
                                                     Map<String, Long> properties,
                                                     TransactionImpl txnImpl) {

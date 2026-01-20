@@ -23,6 +23,7 @@ import io.netty.buffer.ByteBuf;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import lombok.extern.slf4j.Slf4j;
@@ -37,6 +38,7 @@ import org.apache.pulsar.client.util.ExecutorProvider;
 import org.apache.pulsar.common.api.proto.BrokerEntryMetadata;
 import org.apache.pulsar.common.api.proto.MessageIdData;
 import org.apache.pulsar.common.api.proto.MessageMetadata;
+import org.apache.pulsar.common.util.FutureUtil;
 
 @Slf4j
 public class ZeroQueueConsumerImpl<T> extends ConsumerImpl<T> {
@@ -91,6 +93,26 @@ public class ZeroQueueConsumerImpl<T> extends ConsumerImpl<T> {
         }
 
         return future;
+    }
+
+    @Override
+    protected Message<T> internalPeek() throws PulsarClientException {
+        // For zero-queue consumer, we don't support peek() because there's no queue to peek at
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for zero-queue consumers (receiverQueueSize=0)");
+    }
+
+    @Override
+    protected CompletableFuture<Message<T>> internalPeekAsync() {
+        return FutureUtil.failedFuture(
+                new PulsarClientException.InvalidConfigurationException(
+                        "peek() is not supported for zero-queue consumers (receiverQueueSize=0)"));
+    }
+
+    @Override
+    protected Message<T> internalPeek(long timeout, TimeUnit unit) throws PulsarClientException {
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for zero-queue consumers (receiverQueueSize=0)");
     }
 
     private Message<T> fetchSingleMessageFromBroker() throws PulsarClientException {

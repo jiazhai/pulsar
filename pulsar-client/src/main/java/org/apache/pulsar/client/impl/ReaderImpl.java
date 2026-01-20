@@ -206,6 +206,27 @@ public class ReaderImpl<T> implements Reader<T> {
     }
 
     @Override
+    public Message<T> peek() throws PulsarClientException {
+        // Peek returns the message without acknowledging it, so the cursor position remains unchanged
+        return consumer.peek();
+    }
+
+    @Override
+    public Message<T> peek(int timeout, TimeUnit unit) throws PulsarClientException {
+        // Peek returns the message without acknowledging it, so the cursor position remains unchanged
+        return consumer.peek(timeout, unit);
+    }
+
+    @Override
+    public CompletableFuture<Message<T>> peekAsync() {
+        // Peek returns the message without acknowledging it, so the cursor position remains unchanged
+        CompletableFuture<Message<T>> originalFuture = consumer.peekAsync();
+        CompletableFutureCancellationHandler handler = new CompletableFutureCancellationHandler();
+        handler.attachToFuture(originalFuture);
+        return originalFuture;
+    }
+
+    @Override
     public void close() throws IOException {
         consumer.close();
     }

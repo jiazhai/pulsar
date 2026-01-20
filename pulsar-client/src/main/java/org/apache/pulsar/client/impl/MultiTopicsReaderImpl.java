@@ -175,6 +175,25 @@ public class MultiTopicsReaderImpl<T> implements Reader<T> {
     }
 
     @Override
+    public Message<T> peek() throws PulsarClientException {
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for multi-topics reader");
+    }
+
+    @Override
+    public Message<T> peek(int timeout, TimeUnit unit) throws PulsarClientException {
+        throw new PulsarClientException.InvalidConfigurationException(
+                "peek() is not supported for multi-topics reader");
+    }
+
+    @Override
+    public CompletableFuture<Message<T>> peekAsync() {
+        return CompletableFuture.failedFuture(
+                new PulsarClientException.InvalidConfigurationException(
+                        "peek() is not supported for multi-topics reader"));
+    }
+
+    @Override
     public CompletableFuture<Void> closeAsync() {
         return multiTopicsConsumer.closeAsync();
     }
